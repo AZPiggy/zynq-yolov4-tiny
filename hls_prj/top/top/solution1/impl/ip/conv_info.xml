@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project>
+  <core name="" type="" target="">
+    <kernel name="conv" language="c" vlnv="xilinx.com:hls:conv:0.0" attributes="" hash="" preferredWorkGroupSizeMultiple="0" workGroupSize="1" debug="false" interrupt="true">
+      <port name="M_AXI_FM1" mode="master" range="0xFFFFFFFF" dataWidth="16" portType="addressable" base="0x00000000"/>
+      <port name="M_AXI_FM2" mode="master" range="0xFFFFFFFF" dataWidth="16" portType="addressable" base="0x00000000"/>
+      <port name="M_AXI_FM3" mode="master" range="0xFFFFFFFF" dataWidth="16" portType="addressable" base="0x00000000"/>
+      <port name="M_AXI_FM4" mode="master" range="0xFFFFFFFF" dataWidth="16" portType="addressable" base="0x00000000"/>
+      <port name="M_AXI_W1" mode="master" range="0xFFFFFFFF" dataWidth="16" portType="addressable" base="0x00000000"/>
+      <port name="M_AXI_W2" mode="master" range="0xFFFFFFFF" dataWidth="16" portType="addressable" base="0x00000000"/>
+      <port name="M_AXI_W3" mode="master" range="0xFFFFFFFF" dataWidth="16" portType="addressable" base="0x00000000"/>
+      <port name="M_AXI_W4" mode="master" range="0xFFFFFFFF" dataWidth="16" portType="addressable" base="0x00000000"/>
+      <port name="S_AXI_CTRL" mode="slave" range="0x1000" dataWidth="32" portType="addressable" base="0x00000000"/>
+      <arg name="in1_V" addressQualifier="1" id="0" port="M_AXI_FM1" size="0x4" offset="0x10" hostOffset="0x0" hostSize="0x4" type="*"/>
+      <arg name="in2_V" addressQualifier="1" id="1" port="M_AXI_FM2" size="0x4" offset="0x18" hostOffset="0x0" hostSize="0x4" type="*"/>
+      <arg name="in3_V" addressQualifier="1" id="2" port="M_AXI_FM3" size="0x4" offset="0x20" hostOffset="0x0" hostSize="0x4" type="*"/>
+      <arg name="in4_V" addressQualifier="1" id="3" port="M_AXI_FM4" size="0x4" offset="0x28" hostOffset="0x0" hostSize="0x4" type="*"/>
+      <arg name="w1_V" addressQualifier="1" id="4" port="M_AXI_W1" size="0x4" offset="0x30" hostOffset="0x0" hostSize="0x4" type="*"/>
+      <arg name="w2_V" addressQualifier="1" id="5" port="M_AXI_W2" size="0x4" offset="0x38" hostOffset="0x0" hostSize="0x4" type="*"/>
+      <arg name="w3_V" addressQualifier="1" id="6" port="M_AXI_W3" size="0x4" offset="0x40" hostOffset="0x0" hostSize="0x4" type="*"/>
+      <arg name="w4_V" addressQualifier="1" id="7" port="M_AXI_W4" size="0x4" offset="0x48" hostOffset="0x0" hostSize="0x4" type="*"/>
+      <arg name="b_V" addressQualifier="1" id="8" port="M_AXI_W1" size="0x4" offset="0x50" hostOffset="0x0" hostSize="0x4" type="*"/>
+      <arg name="out1_V" addressQualifier="1" id="9" port="M_AXI_FM1" size="0x4" offset="0x58" hostOffset="0x0" hostSize="0x4" type="*"/>
+      <arg name="out2_V" addressQualifier="1" id="10" port="M_AXI_FM2" size="0x4" offset="0x60" hostOffset="0x0" hostSize="0x4" type="*"/>
+      <arg name="out3_V" addressQualifier="1" id="11" port="M_AXI_FM3" size="0x4" offset="0x68" hostOffset="0x0" hostSize="0x4" type="*"/>
+      <arg name="out4_V" addressQualifier="1" id="12" port="M_AXI_FM4" size="0x4" offset="0x70" hostOffset="0x0" hostSize="0x4" type="*"/>
+      <arg name="ch_in" addressQualifier="0" id="13" port="S_AXI_CTRL" size="0x4" offset="0x78" hostOffset="0x0" hostSize="0x4" type="int"/>
+      <arg name="ch_out" addressQualifier="0" id="14" port="S_AXI_CTRL" size="0x4" offset="0x80" hostOffset="0x0" hostSize="0x4" type="int"/>
+      <arg name="fsize" addressQualifier="0" id="15" port="S_AXI_CTRL" size="0x4" offset="0x88" hostOffset="0x0" hostSize="0x4" type="int"/>
+      <arg name="stride" addressQualifier="0" id="16" port="S_AXI_CTRL" size="0x4" offset="0x90" hostOffset="0x0" hostSize="0x4" type="int"/>
+      <arg name="kernel" addressQualifier="0" id="17" port="S_AXI_CTRL" size="0x4" offset="0x98" hostOffset="0x0" hostSize="0x4" type="int"/>
+      <arg name="act" addressQualifier="0" id="18" port="S_AXI_CTRL" size="0x4" offset="0xA0" hostOffset="0x0" hostSize="0x4" type="int"/>
+      <compileWorkGroupSize x="1" y="1" z="1"/>
+    </kernel>
+  </core>
+</project>

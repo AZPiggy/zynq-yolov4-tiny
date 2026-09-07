@@ -1,0 +1,6 @@
+the_ROM_image:
+{
+    [bootloader] ..\workspace_mindc\mindc_yolo_platform\export\mindc_yolo_platform\sw\mindc_yolo_platform\boot\fsbl.elf
+    ..\..\vivado_prj\output\design_1_wrapper_mindc.bit
+    ..\output\yolo_qiming.elf
+}
