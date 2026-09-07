@@ -7,7 +7,7 @@ using namespace std;
 
 class BasicConv{
 public:
-    //閿熸枻鎷烽敓鏂ゆ嫹
+    //layer geometry
     int h;
     int w;
     int s;
@@ -15,10 +15,10 @@ public:
     int p;
     int ch_in;
     int ch_out;
-    //鏉冮敓鏂ゆ嫹
+    //parameters
     data_t* weight;
     data_t* bias;
-    //閿熸枻鎷烽敓鏂ゆ嫹
+    //constructor
     BasicConv(int h,int w,int k,int s,int p,int ch_in,int ch_out){
         this->h=h;
         this->w=w;
@@ -34,7 +34,7 @@ public:
         conv_leakyrelu(this->ch_in,this->ch_out,this->p,this->s,this->k,this->h,this->w,in,this->weight,this->bias,out,1);
     }
     void load_weight(string dir){
-        //閿熸枻鎷峰彇閿熸枻鎷烽敓鏂ゆ嫹鏉冮敓鏂ゆ嫹
+        //read the weight and bias files for this layer
         string filename;
         filename=dir+"\\w.bin";
         read_params(filename,this->weight,this->ch_out*this->ch_in*this->k*this->k);
@@ -58,7 +58,7 @@ public:
         this->w=w;
         this->ch_in=ch_in;
         this->ch_out=ch_out;
-        //閿熸枻鎷峰閿熸枻鎷稡asicConv
+        //build the four BasicConv sub-layers
         this->conv1=new BasicConv(this->h,this->w,3,1,1,this->ch_in,this->ch_out);                   //
         this->conv2=new BasicConv(this->h,this->w,3,1,1,this->ch_out/2,this->ch_out/2);
         this->conv3=new BasicConv(this->h,this->w,3,1,1,this->ch_out/2,this->ch_out/2);

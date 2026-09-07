@@ -3,7 +3,7 @@ from yolo import YOLO
 
 if __name__ == "__main__":
     yolo = YOLO()
-    mode=0                    #0为图片预处理,生成可以直接作为加速器输入的img.bin文件,1为根据加速器的输出进行解码、显示
+    mode=0                    #0 = preprocess an image into img.bin for the accelerator; 1 = decode and display the accelerator's output
     mode=int(input('Input mode(0:preprocess,1:detect):'))
     if mode==1:
         dir = input('Input directory:')

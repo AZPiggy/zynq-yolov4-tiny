@@ -17,6 +17,7 @@ SD:/yolo_test/input.jpg  ──►  [ Zynq-7020 ]  ──►  SD:/yolo_test/resu
 ## Table of contents
 
 - [How it works](#how-it-works)
+- [Accelerator design and optimizations](#accelerator-design-and-optimizations)
 - [Hardware](#hardware)
 - [Repository layout](#repository-layout)
 - [Prerequisites](#prerequisites)
@@ -56,6 +57,67 @@ per-class NMS at 0.30 IoU.
 
 ---
 
+## Accelerator design and optimizations
+
+Two things make the accelerator fast: how the PS and PL talk to each other, and how the
+HLS kernel itself is written. Both are visible directly in `hls_prj/top/src/std_conv.cpp`
+and `.h`.
+
+### PS ↔ PL interface
+
+The `conv` IP has no DMA engine and no interrupt — the interface is two separate AXI
+planes plus a memory contract the firmware has to honour:
+
+- **Control plane — one AXI-Lite slave at `0x43C0_0000`.** Six scalars (`ch_in`, `ch_out`,
+  `fsize`, `stride`, `kernel`, `act`) and a start/done handshake. Deliberately narrow: a
+  few dozen bytes per layer, so its latency is irrelevant.
+- **Data plane — eight independent AXI master ports** (`FM1`–`FM4` for feature maps,
+  `W1`–`W4` for weights), each bursting up to 256 beats. Splitting into four parallel
+  channel-planes instead of one wide port lets the core stream several channels
+  concurrently rather than serializing through a single interface.
+- **Polling, not interrupts.** A bare-metal program with one job spins on `XConv_IsDone()`
+  — simpler and lower-latency here than an ISR.
+- **The real contract is cache coherency.** The HP ports have no hardware coherency with
+  the ARM caches, so software must `Xil_DCacheFlush()` before `XConv_Start()` and
+  `Xil_DCacheInvalidateRange()` after `XConv_IsDone()` — otherwise the accelerator reads
+  stale input or the CPU reads stale output. See `conv_leakyrelu()` in `basic_op.cpp`.
+
+The per-layer handshake, in full:
+
+```
+PS: write 13 buffer addresses + 6 geometry scalars
+PS: Xil_DCacheFlush()
+PS: XConv_Start()
+PL: burst-reads DDR, computes, burst-writes results back
+PS: poll XConv_IsDone(), then Xil_DCacheInvalidateRange()
+```
+
+### HLS kernel optimizations (`std_conv.cpp`)
+
+Four transformations take the 3×3 convolution engine from a naive loop nest to using
+every DSP slice on the device:
+
+1. **Tiling** (`Tr=Tc=13, Tn=4, Tm=32`). The kernel works on a 13×13 output tile of 32
+   output channels at a time, fed by a 27×27 input tile that already includes the 3×3
+   halo (`compute_output()`). Everything outside the current tile stays in DDR.
+2. **Double-buffered prefetch.** `fm_in_buff1/2` and `wt_buff1/2` ping-pong: while the
+   current tile is being multiplied in `compute()`, the next input-channel tile is already
+   loading from DDR (`compute_output()`'s `pingpong` loop). DDR latency is hidden behind
+   compute instead of stalling it.
+3. **Loop unrolling with `PIPELINE II=1`.** The `Tm` and `Tn` loops sit inside an
+   initiation-interval-1 pipeline (`#pragma HLS PIPELINE II=1` in `compute()`), so HLS
+   instantiates `Tm × Tn = 128` multiply-accumulates issuing in the same cycle.
+4. **Steering index arithmetic off the DSPs.** `#pragma HLS RESOURCE ... core=Mul_LUT`
+   forces address/offset multiplications into LUT fabric instead of DSP blocks, so all
+   220 DSPs on the device stay free for actual convolution MACs.
+
+The trade this buys: **69% of LUTs and 94% of slices spent to keep 100% of the device's
+DSPs busy** (see [utilization numbers](#hardware) below) — this design is DSP-bound, not
+routing-bound. Weights and activations use `ap_fixed<16,7,AP_RND,AP_SAT>` — one DSP per
+multiply-accumulate, with rounding and saturation instead of wraparound.
+
+---
+
 ## Hardware
 
 Developed and tested on:
@@ -74,6 +136,21 @@ Developed and tested on:
 
 > The SD signals pass through a `TXS02612` level translator (bank is 1.8 V, card is 3.3 V).
 > The carrier board's own `SW1` DIP selects the boot mode; see the board user manual.
+
+Post-route utilization, from `vivado_prj/output/utilization_mindc.rpt` and
+`timing_summary_mindc.rpt`:
+
+| Resource | Used | Available | Utilization |
+|---|---|---|---|
+| DSP slices | 220 | 220 | **100%** |
+| Slice LUTs | 36,519 | 53,200 | 68.6% |
+| Block RAM tiles | 94.5 | 140 | 67.5% |
+| Slice registers | 39,405 | 106,400 | 37.0% |
+
+Timing closes with **WNS +0.347 ns**, **WHS +0.035 ns**, and zero failing endpoints out of
+139,525. The design is DSP-bound: every multiplier on the device is committed to the 3×3
+engine, so further speed-up on this part has to come from arithmetic (narrower data,
+Winograd) rather than from routing or clocking headroom.
 
 ---
 

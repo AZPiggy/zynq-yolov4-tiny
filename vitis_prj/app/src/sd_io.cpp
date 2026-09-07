@@ -1,7 +1,7 @@
 /*
  * sd_io.c
  *
- *  Created on: 2021��8��18��
+ *  Created on: 2021-08-18
  *      Author: DELL
  */
 #include "sd_io.h"

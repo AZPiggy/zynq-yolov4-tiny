@@ -17,7 +17,7 @@ public:
     data_t* yolo_headP5_b2;
     //upsample
     BasicConv* upsample_conv;
-    Yolo4_Tiny(){           //���캯��
+    Yolo4_Tiny(){           //constructor
         this->backbone=new CSPDarkNet();
         //conv_forP5
         this->conv_forP5_conv=new BasicConv(13,13,1,1,0,512,256);         //K=1
@@ -59,7 +59,7 @@ public:
 		static data_t P4[384*26*26];
 		static data_t out1_tmp[256*26*26];
         //compute
-        this->backbone->forward(in,P4+128*26*26,feat2);                 //相当于concat,P4=concat(Upsample_out,feat1)
+        this->backbone->forward(in,P4+128*26*26,feat2);                 //acts as a concat: P4 = concat(Upsample_out, feat1)
         //cout<<"backbone end\n";
         //conv_forP5
         this->conv_forP5_conv->forward(feat2,P5);

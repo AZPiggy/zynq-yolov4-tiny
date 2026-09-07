@@ -1,49 +1,50 @@
 /*
  * ================================================================
- * 文件名称：main.cpp
- * 工程名称：启明星 Zynq-7020 YOLOv4-Tiny
+ * File:    main.cpp
+ * Project: Zynq-7020 YOLOv4-Tiny
  *
- * 功能说明：
- *  1. 初始化 Zynq PS 端 GPIO，并控制底板 PS_LED0。
- *  2. 挂载 SD 卡文件系统。
- *  3. 在 SD 卡的 yolo_test 目录中查找：
+ * What this does:
+ *  1. Initialise the Zynq PS GPIO and drive the carrier board's
+ *     PS_LED0.
+ *  2. Mount the SD card filesystem.
+ *  3. Look in the SD card's yolo_test directory for any of:
  *         input.jpg
  *         input.jpeg
  *         input.png
- *     三种输入图片中的任意一种。
- *  4. 调用 yolo_test() 完成 YOLOv4-Tiny 推理。
- *  5. 将目标检测结果保存到：
+ *  4. Call yolo_test() to run YOLOv4-Tiny inference.
+ *  5. Save the detection result to:
  *         yolo_test/result.jpg
- *  6. 当且仅当整个流程成功完成后，点亮 PS_LED0。
+ *  6. Light PS_LED0 if, and only if, the whole flow succeeded.
  *
- * 如果定义 QIMING_DIAGNOSTIC：
- *  程序还会启用额外的板端诊断功能，用于：
- *      - 记录程序执行阶段
- *      - 记录 SD 卡初始化状态
- *      - 记录文件查找状态
- *      - 记录权重读取状态
- *      - 记录推理时间
- *      - 记录输出张量统计信息
- *      - 将输入/输出图片复制到 DDR，方便通过 JTAG 查看
+ * If QIMING_DIAGNOSTIC is defined:
+ *  The build also enables on-board diagnostics that record:
+ *      - which stage execution reached
+ *      - the SD card initialisation status
+ *      - the file search status
+ *      - the weight loading status
+ *      - the inference time
+ *      - output tensor statistics
+ *      - copies of the input/output images in DDR, so they can be
+ *        inspected over JTAG
  * ================================================================
  */
 
 
-/* C++ 标准输入输出库
+/* C++ standard I/O.
  *
- * 主要用于：
+ * Used for:
  *      cout << ...
  *      endl
  *
- * 在 Vitis standalone 环境中，如果 BSP 中配置了标准输出设备，
- * cout 最终可以通过 UART 输出。
+ * In a Vitis standalone build, cout reaches the UART provided the
+ * BSP has a standard output device configured.
  */
 #include <iostream>
 
 /*
- * FatFs 文件系统头文件。
+ * FatFs header.
  *
- * 提供：
+ * Provides:
  *      FIL
  *      FILINFO
  *      f_open()
@@ -52,75 +53,74 @@
  *      f_close()
  *      f_stat()
  *
- * 等 SD 卡 FAT 文件系统操作接口。
+ * i.e. the FAT filesystem interface to the SD card.
  */
 #include "ff.h"
 
 /*
- * Zynq PS GPIO 驱动。
+ * Zynq PS GPIO driver.
  *
- * 用于控制 Processing System（PS）侧的 MIO GPIO。
- * 本工程使用 MIO7 控制底板 PS_LED0。
+ * Used to drive the Processing System's MIO GPIO.
+ * This project uses MIO7 to control the carrier board's PS_LED0.
  */
 #include "xgpiops.h"
 
 /*
- * Xilinx 轻量级 printf。
+ * Xilinx lightweight printf.
  *
- * xil_printf() 通常比完整 printf() 更适合裸机系统，
- * 因为占用的代码空间更小。
+ * xil_printf() suits bare-metal systems better than a full printf()
+ * because it takes far less code space.
  */
 #include "xil_printf.h"
 
 /*
- * Vivado 导出硬件平台后自动生成的参数定义文件。
+ * Parameter definitions generated when Vivado exports the hardware
+ * platform.
  *
- * 其中包含：
+ * Contains, among others:
  *      XPAR_XGPIOPS_0_DEVICE_ID
- *
- * 等硬件 IP 参数。
  */
 #include "xparameters.h"
 
 /*
- * 工程内部调试 / YOLO 推理相关声明。
+ * Project-internal debug / YOLO inference declarations.
  *
- * 根据当前工程结构，SD_Init()、yolo_test() 等函数
- * 很可能通过该头文件或其进一步包含的头文件进行声明。
+ * SD_Init() and yolo_test() are declared through this header or one
+ * of the headers it includes.
  */
 #include "debug.h"
 
 
 /*
- * GCC 编译优化设置：
+ * GCC optimisation settings:
  *
  * optimize(3)
- *      相当于较高级别的编译优化。
+ *      a high optimisation level.
  *
  * Ofast
- *      进一步追求程序执行速度。
+ *      pushes further for execution speed.
  *
  * inline
- *      尽可能执行函数内联。
+ *      inline wherever possible.
  *
- * 对 YOLO 推理这种计算密集型程序，
- * 可以降低部分软件执行开销。
+ * For compute-heavy code like YOLO inference this trims some of the
+ * software overhead.
  *
- * 注意：
- * Ofast 会使用一些比标准 C/C++ 更激进的优化，
- * 尤其会影响浮点运算严格性。
+ * Note:
+ * Ofast enables optimisations more aggressive than standard C/C++,
+ * and relaxes strict floating-point behaviour in particular.
  */
 #pragma GCC optimize(3, "Ofast", "inline")
 
 
 /*
- * 允许直接使用：
+ * Allows writing:
  *
  *      string
  *      cout
  *      endl
  *
- * 而不需要每次写：
+ * instead of:
  *
  *      std::string
  *      std::cout
@@ -131,104 +131,105 @@ using namespace std;
 
 /*
  * ================================================================
- * 匿名命名空间
+ * Anonymous namespace
  * ================================================================
  *
- * 匿名 namespace 中定义的变量和函数仅在当前源文件中可见。
+ * Anything defined in an anonymous namespace is visible only within
+ * this translation unit.
  *
- * 类似于 C 语言中的 static 全局变量 / static 函数，
- * 可以防止与工程其他源文件中的同名符号发生冲突。
+ * Similar to a static global / static function in C: it prevents
+ * name collisions with symbols in other source files.
  */
 namespace {
 
 
 /*
- * PS_LED0 对应的 GPIO Pin。
+ * GPIO pin driving PS_LED0.
  *
- * 当前值：
+ * Current value:
  *
  *      7U
  *
- * 表示使用 Zynq PS GPIO 的 MIO7。
+ * i.e. MIO7 of the Zynq PS GPIO.
  *
- * U 表示该常量是 unsigned 类型。
+ * The U suffix marks the constant as unsigned.
  */
 const u32 DONE_LED_PIN = 7U;
 
 
 /*
- * PS GPIO 驱动实例。
+ * PS GPIO driver instance.
  *
- * 后续初始化、设置方向以及写 GPIO 电平，
- * 都通过该对象完成。
+ * Initialisation, direction control and level writes all go through
+ * this object.
  */
 XGpioPs ps_gpio;
 
 
 /*
  * ================================================================
- * 函数名称：initialize_done_led
+ * Function: initialize_done_led
  *
- * 功能：
- *      初始化用于表示 YOLO 推理完成状态的 PS_LED0。
+ * Purpose:
+ *      Initialise PS_LED0, the "inference complete" indicator.
  *
- * 初始化过程：
+ * Steps:
  *
- *      1. 查询 PS GPIO 配置信息
- *      2. 初始化 GPIO 驱动
- *      3. 将 MIO7 设置为输出
- *      4. 使能 MIO7 输出
- *      5. 默认输出低电平，使 LED 熄灭
+ *      1. Look up the PS GPIO configuration
+ *      2. Initialise the GPIO driver
+ *      3. Set MIO7 as an output
+ *      4. Enable the MIO7 output driver
+ *      5. Drive it low so the LED starts off
  *
- * 返回值：
+ * Returns:
  *
  *      true
- *          初始化成功
+ *          initialisation succeeded
  *
  *      false
- *          初始化失败
+ *          initialisation failed
  *
- * 设计意图：
+ * Rationale:
  *
- *      程序刚启动时 LED 必须保持熄灭。
- *      只有：
+ *      The LED must be off at start-up. It is only lit, via
+ *      set_done_led(), once:
  *
- *          SD 卡成功
- *          输入图片成功
- *          权重读取成功
- *          YOLO 推理成功
- *          result.jpg 写入成功
+ *          the SD card mounted
+ *          an input image was found
+ *          the weights loaded
+ *          inference completed
+ *          result.jpg was written
  *
- *      后，才调用 set_done_led() 点亮 LED。
+ *      have all succeeded.
  * ================================================================
  */
 bool initialize_done_led()
 {
     /*
-     * 根据 Vivado/Vitis 自动生成的 Device ID，
-     * 查找 PS GPIO 的硬件配置。
+     * Look up the PS GPIO hardware configuration using the device ID
+     * generated by Vivado/Vitis.
      */
     XGpioPs_Config* config =
         XGpioPs_LookupConfig(XPAR_XGPIOPS_0_DEVICE_ID);
 
 
     /*
-     * 判断：
+     * Check that:
      *
-     * 1. 是否成功找到 GPIO 配置
-     * 2. GPIO 驱动是否初始化成功
+     * 1. the GPIO configuration was found
+     * 2. the GPIO driver initialised successfully
      *
-     * XST_SUCCESS 表示 Xilinx 驱动函数执行成功。
+     * XST_SUCCESS indicates a Xilinx driver call succeeded.
      */
     if (config == 0 ||
         XGpioPs_CfgInitialize(
-            &ps_gpio,          // GPIO 驱动实例
-            config,            // GPIO 配置参数
-            config->BaseAddr   // GPIO 寄存器基地址
+            &ps_gpio,          // driver instance
+            config,            // configuration data
+            config->BaseAddr   // GPIO register base address
         ) != XST_SUCCESS) {
 
         /*
-         * 初始化失败时通过串口打印错误信息。
+         * Report the failure over the serial port.
          */
         xil_printf(
             "ERROR: PS_LED0 GPIO initialization failed\r\n"
@@ -239,12 +240,12 @@ bool initialize_done_led()
 
 
     /*
-     * 设置 MIO7 为输出方向。
+     * Set MIO7 as an output.
      *
-     * 第三个参数：
+     * Third argument:
      *
-     *      1U = 输出
-     *      0U = 输入
+     *      1U = output
+     *      0U = input
      */
     XGpioPs_SetDirectionPin(
         &ps_gpio,
@@ -254,9 +255,8 @@ bool initialize_done_led()
 
 
     /*
-     * 使能 MIO7 输出。
-     *
-     * 即允许 GPIO 驱动实际向引脚输出逻辑电平。
+     * Enable the MIO7 output driver, so the GPIO can actually drive
+     * a level onto the pin.
      */
     XGpioPs_SetOutputEnablePin(
         &ps_gpio,
@@ -266,14 +266,13 @@ bool initialize_done_led()
 
 
     /*
-     * 程序启动时首先输出低电平。
+     * Drive low at start-up, so:
      *
-     * 因此：
+     *      PS_LED0 initial state = off
      *
-     *      PS_LED0 初始状态 = 熄灭
-     *
-     * 这样可以确保 LED 不会因为之前的 GPIO 状态
-     * 或程序异常而误表示“推理成功”。
+     * This makes sure the LED cannot falsely indicate "inference
+     * succeeded" because of a previous GPIO state or an earlier
+     * abnormal run.
      */
     XGpioPs_WritePin(
         &ps_gpio,
@@ -288,18 +287,18 @@ bool initialize_done_led()
 
 /*
  * ================================================================
- * 函数名称：set_done_led
+ * Function: set_done_led
  *
- * 功能：
- *      点亮 PS_LED0。
+ * Purpose:
+ *      Light PS_LED0.
  *
- * 当前硬件设计中：
+ * On this hardware:
  *
  *      MIO7 = 1
  *
- * 即输出高电平时 LED 点亮。
+ * i.e. a high level lights the LED.
  *
- * 该函数只应在整个 YOLO 推理流程成功后调用。
+ * Only call this once the entire YOLO flow has succeeded.
  * ================================================================
  */
 void set_done_led()
@@ -317,64 +316,61 @@ void set_done_led()
 
 /*
  * ================================================================
- * QIMING_DIAGNOSTIC 诊断模式
+ * QIMING_DIAGNOSTIC diagnostic mode
  * ================================================================
  *
- * 只有在编译时定义：
+ * The code below is compiled only when:
  *
  *      QIMING_DIAGNOSTIC
  *
- * 下面的代码才会被编译。
- *
- * 例如可以在编译参数中加入：
+ * is defined, for example by adding:
  *
  *      -DQIMING_DIAGNOSTIC
  *
- * 这些变量主要用于 JTAG 调试。
+ * to the compiler flags.
  *
- * 由于使用：
+ * These variables exist mainly for JTAG debugging.
+ *
+ * Because they are declared:
  *
  *      volatile
  *
- * 编译器不会轻易优化掉这些变量，
- * 因此可以使用 XSCT、Vitis Debugger 或 JTAG
- * 在程序停止后读取变量值。
+ * the compiler will not optimise them away, so XSCT, the Vitis
+ * debugger or JTAG can read their values once the program halts.
  */
 #ifdef QIMING_DIAGNOSTIC
 
 
 /*
- * 当前程序执行到哪个阶段。
+ * Which stage execution has reached.
  *
- * 可以根据这个值判断程序停在哪里。
+ * Use this value to work out where the program stopped.
  */
 extern "C" volatile unsigned int g_diag_stage = 0;
 
 
 /*
- * SD_Init() 返回值。
+ * Return value of SD_Init().
  *
- * 默认：
+ * Default:
  *
- *      -1 = 尚未执行
+ *      -1 = not yet run
  */
 extern "C" volatile int g_diag_sd_init_rc = -1;
 
 
 /*
- * boot_stage.txt 文件操作返回值。
+ * Return value of the boot_stage.txt file operations.
  */
 extern "C" volatile int g_diag_stage_file_rc = -1;
 
 
 /*
- * 三种输入图片：
+ * f_stat() status for each of the three candidate inputs:
  *
  *      input.jpg
  *      input.jpeg
  *      input.png
- *
- * 对应 f_stat() 的返回状态。
  */
 extern "C" volatile int g_diag_stat_rc[3] =
 {
@@ -385,96 +381,96 @@ extern "C" volatile int g_diag_stat_rc[3] =
 
 
 /*
- * YOLO 最终检测到的目标数量。
+ * Number of objects YOLO finally detected.
  *
- * 该变量通常由其他 YOLO 代码更新。
+ * Normally updated by the YOLO code itself.
  */
 extern "C" volatile int g_diag_detection_count = -1;
 
 
 /*
- * 对 result.jpg 执行 f_stat() 的返回值。
+ * Return value of f_stat() on result.jpg.
  */
 extern "C" volatile int g_diag_result_stat_rc = -1;
 
 
 /*
- * 最终 result.jpg 的文件大小，单位：Byte。
+ * Final size of result.jpg, in bytes.
  */
 extern "C" volatile unsigned int g_diag_result_size = 0;
 
 
 /*
- * 模型参数读取次数。
+ * Number of model parameter reads attempted.
  */
 extern "C" volatile unsigned int g_diag_param_read_count = 0;
 
 
 /*
- * 模型参数读取失败次数。
+ * Number of model parameter reads that failed.
  */
 extern "C" volatile unsigned int g_diag_param_read_failures = 0;
 
 
 /*
- * 已读取模型参数总字节数。
+ * Total bytes of model parameters read.
  */
 extern "C" volatile unsigned int g_diag_param_bytes = 0;
 
 
 /*
- * 第一个 YOLO 输出张量的最小值。
+ * Minimum value in the first YOLO output tensor.
  */
 extern "C" volatile int g_diag_out0_min = 0;
 
 
 /*
- * 第一个 YOLO 输出张量的最大值。
+ * Maximum value in the first YOLO output tensor.
  */
 extern "C" volatile int g_diag_out0_max = 0;
 
 
 /*
- * 第一个输出张量中非零数据数量。
+ * Count of non-zero values in the first output tensor.
  *
- * 用于判断神经网络是否产生有效输出。
+ * Useful for checking that the network produced anything at all.
  */
 extern "C" volatile unsigned int g_diag_out0_nonzero = 0;
 
 
 /*
- * 第二个 YOLO 输出张量的最小值。
+ * Minimum value in the second YOLO output tensor.
  */
 extern "C" volatile int g_diag_out1_min = 0;
 
 
 /*
- * 第二个 YOLO 输出张量的最大值。
+ * Maximum value in the second YOLO output tensor.
  */
 extern "C" volatile int g_diag_out1_max = 0;
 
 
 /*
- * 第二个输出张量非零数据数量。
+ * Count of non-zero values in the second output tensor.
  */
 extern "C" volatile unsigned int g_diag_out1_nonzero = 0;
 
 
 /*
- * 整个 YOLO 推理耗时。
+ * Total YOLO inference time.
  *
- * 单位：
+ * Units:
  *
- *      us（微秒）
+ *      us (microseconds)
  */
 extern "C" volatile unsigned int g_diag_inference_us = 0;
 
 
 /*
- * 两个 YOLO Detection Head 中检测到的
- * 最大 objectness 值。
+ * Highest objectness value seen in each of the two YOLO detection
+ * heads.
  *
- * YOLOv4-Tiny 有两个尺度的检测头，因此数组长度为 2。
+ * YOLOv4-Tiny has two detection scales, hence two entries.
  */
 extern "C" volatile unsigned int
 g_diag_head_max_objectness[2] =
@@ -485,7 +481,7 @@ g_diag_head_max_objectness[2] =
 
 
 /*
- * 两个检测头的最大分类得分。
+ * Highest class score in each of the two heads.
  */
 extern "C" volatile unsigned int
 g_diag_head_max_score[2] =
@@ -496,7 +492,7 @@ g_diag_head_max_score[2] =
 
 
 /*
- * 两个检测头当前得分最高目标对应的类别 ID。
+ * Class ID of the highest-scoring object in each head.
  */
 extern "C" volatile int
 g_diag_head_best_class[2] =
@@ -507,55 +503,54 @@ g_diag_head_best_class[2] =
 
 
 /*
- * 将 result.jpg 拷贝到 DDR 后，
- * 保存 DDR 缓冲区地址。
+ * DDR address of the copy of result.jpg.
  *
- * 这样 JTAG 可以根据该地址读取整个 JPEG 文件。
+ * JTAG can use this address to read back the whole JPEG file.
  */
 extern "C" volatile unsigned int
 g_diag_result_copy_address = 0;
 
 
 /*
- * 实际复制到 DDR 的 result.jpg 字节数。
+ * Number of bytes of result.jpg actually copied into DDR.
  */
 extern "C" volatile unsigned int
 g_diag_result_copy_bytes = 0;
 
 
 /*
- * result.jpg DDR 拷贝操作返回状态。
+ * Status of the result.jpg DDR copy operation.
  */
 extern "C" volatile int
 g_diag_result_copy_rc = -1;
 
 
 /*
- * cat 类别检测到的最大 score。
+ * Highest score seen for the "cat" class.
  *
- * 这是针对测试图片 / 特定类别加入的诊断信息。
+ * Diagnostic aid for a specific test image / class.
  */
 extern "C" volatile unsigned int
 g_diag_cat_max_score = 0;
 
 
 /*
- * dog 类别检测到的最大 score。
+ * Highest score seen for the "dog" class.
  */
 extern "C" volatile unsigned int
 g_diag_dog_max_score = 0;
 
 
 /*
- * 输入图片复制到固定 DDR 地址后，
- * 实际复制的字节数量。
+ * Number of bytes of the input image copied to its fixed DDR
+ * address.
  */
 extern "C" volatile unsigned int
 g_diag_input_copy_bytes = 0;
 
 
 /*
- * 输入图片复制操作返回状态。
+ * Status of the input image copy operation.
  */
 extern "C" volatile int
 g_diag_input_copy_rc = -1;
@@ -564,55 +559,55 @@ g_diag_input_copy_rc = -1;
 
 /*
  * ================================================================
- * 函数名称：write_boot_stage
+ * Function: write_boot_stage
  *
- * 参数：
+ * Parameters:
  *
  *      text
- *          要写入 boot_stage.txt 的文本。
+ *          the text to write into boot_stage.txt.
  *
- * 功能：
+ * Purpose:
  *
- *      在 SD 卡中创建/覆盖：
+ *      Create or overwrite:
  *
  *          yolo_test/boot_stage.txt
  *
- *      然后将当前启动阶段信息写进去。
+ *      on the SD card, and record the current boot stage in it.
  *
- * 目的：
+ * Why:
  *
- *      即使 UART / JTAG 输出不方便查看，
- *      也可以拔出 SD 卡，在电脑上直接查看该文件，
- *      判断程序至少运行到了哪个阶段。
+ *      Even when UART or JTAG output is inconvenient to watch, the
+ *      card can be pulled and the file read on a PC to see how far
+ *      the program got.
  *
- * 返回值：
+ * Returns:
  *
- *      FatFs 的 FRESULT 状态码。
+ *      The FatFs FRESULT status code.
  * ================================================================
  */
 static int write_boot_stage(const char* text)
 {
     /*
-     * FatFs 文件对象。
+     * FatFs file object.
      */
     FIL file;
 
 
     /*
-     * 实际写入的字节数。
+     * Number of bytes actually written.
      */
     UINT written = 0;
 
 
     /*
-     * 创建或覆盖 boot_stage.txt。
+     * Create or overwrite boot_stage.txt.
      *
-     * FA_CREATE_ALWAYS：
-     *      文件存在则清空；
-     *      文件不存在则创建。
+     * FA_CREATE_ALWAYS:
+     *      truncate if the file exists;
+     *      create it if it does not.
      *
-     * FA_WRITE：
-     *      以写模式打开。
+     * FA_WRITE:
+     *      open for writing.
      */
     FRESULT result =
         f_open(
@@ -623,15 +618,15 @@ static int write_boot_stage(const char* text)
 
 
     /*
-     * 只有文件打开成功后才能继续写入。
+     * Only continue if the file opened successfully.
      */
     if (result == FR_OK) {
 
         /*
-         * 计算 text 字符串长度。
+         * Measure the length of text.
          *
-         * 没有调用 strlen()，
-         * 而是手动遍历直到 '\0'。
+         * Walks to the terminating '\0' rather than calling
+         * strlen().
          */
         unsigned int length = 0;
 
@@ -641,7 +636,7 @@ static int write_boot_stage(const char* text)
 
 
         /*
-         * 将诊断文本写入文件。
+         * Write the diagnostic text to the file.
          */
         result =
             f_write(
@@ -653,9 +648,8 @@ static int write_boot_stage(const char* text)
 
 
         /*
-         * 即使 f_write 返回 FR_OK，
-         * 如果实际写入字节数 != 预期字节数，
-         * 仍然认为发生磁盘写入错误。
+         * Even if f_write returns FR_OK, treat a short write as a
+         * disk error.
          */
         if (result == FR_OK &&
             written != length) {
@@ -665,15 +659,15 @@ static int write_boot_stage(const char* text)
 
 
         /*
-         * 关闭文件。
+         * Close the file.
          */
         const FRESULT close_result =
             f_close(&file);
 
 
         /*
-         * 如果之前的写操作成功，
-         * 则进一步检查关闭文件时是否发生错误。
+         * If the write itself succeeded, report any error from
+         * closing the file instead.
          */
         if (result == FR_OK) {
             result = close_result;
@@ -682,7 +676,7 @@ static int write_boot_stage(const char* text)
 
 
     /*
-     * 将 FatFs FRESULT 转换成 int 返回。
+     * Return the FatFs FRESULT as an int.
      */
     return static_cast<int>(result);
 }
@@ -691,41 +685,38 @@ static int write_boot_stage(const char* text)
 
 /*
  * ================================================================
- * 函数名称：diagnostic_stop
+ * Function: diagnostic_stop
  *
- * 参数：
+ * Parameters:
  *
  *      stage
- *          当前程序阶段 / 错误码。
+ *          the current stage / error code.
  *
- * 功能：
+ * Purpose:
  *
- *      1. 将诊断阶段写入 g_diag_stage
- *      2. 进入死循环
+ *      1. Record the diagnostic stage in g_diag_stage
+ *      2. Spin forever
  *
- * 为什么故意死循环：
+ * Why halt deliberately:
  *
- *      在 JTAG 调试模式下，
- *      如果程序直接 return 或复位，
- *      很多运行现场可能丢失。
+ *      Under JTAG, returning or resetting would discard much of the
+ *      run-time state.
  *
- *      停在 while(1) 后，可以通过 JTAG
- *      查看所有 g_diag_xxx 变量，
- *      从而分析故障原因。
+ *      Parking in while(1) instead lets JTAG read every g_diag_xxx
+ *      variable to work out what went wrong.
  * ================================================================
  */
 static void diagnostic_stop(unsigned int stage)
 {
     /*
-     * 保存当前诊断阶段。
+     * Record the current diagnostic stage.
      */
     g_diag_stage = stage;
 
 
     /*
-     * 永久停止在这里。
-     *
-     * 等待 JTAG / Debugger 检查变量。
+     * Halt here permanently, waiting for JTAG or a debugger to
+     * inspect the variables.
      */
     while (1) {
     }
@@ -739,40 +730,39 @@ static void diagnostic_stop(unsigned int stage)
  * ================================================================
  * main()
  *
- * YOLOv4-Tiny 板端程序主入口。
+ * Entry point of the on-board YOLOv4-Tiny program.
  *
- * 主流程：
+ * Flow:
  *
- *      GPIO初始化
- *          ↓
- *      LED熄灭
- *          ↓
- *      初始化SD卡
- *          ↓
- *      查找输入图片
- *          ↓
- *      YOLO推理
- *          ↓
- *      result.jpg写回SD卡
- *          ↓
- *      LED点亮
+ *      initialise GPIO
+ *          |
+ *      LED off
+ *          |
+ *      initialise the SD card
+ *          |
+ *      find the input image
+ *          |
+ *      run YOLO inference
+ *          |
+ *      write result.jpg back to the SD card
+ *          |
+ *      LED on
  *
- * 如果任何一个关键步骤失败：
+ * If any critical step fails:
  *
- *      LED 均保持熄灭。
+ *      the LED stays off.
  * ================================================================
  */
 int main()
 {
     /*
      * ------------------------------------------------------------
-     * 1. 初始化 PS_LED0
+     * 1. Initialise PS_LED0
      * ------------------------------------------------------------
      *
-     * 初始化成功后 LED 默认保持低电平。
+     * On success the LED is left driven low.
      *
-     * 如果 GPIO 初始化本身失败，
-     * 程序立即结束。
+     * If GPIO initialisation itself fails, stop immediately.
      */
     if (!initialize_done_led()) {
         return 1;
@@ -782,15 +772,15 @@ int main()
 #ifdef QIMING_DIAGNOSTIC
 
     /*
-     * 诊断阶段 1：
+     * Diagnostic stage 1:
      *
-     * 已经成功进入 main()。
+     * main() has been entered.
      */
     g_diag_stage = 1;
 
 
     /*
-     * UART 打印程序进入 main。
+     * Announce entry to main over the UART.
      */
     xil_printf(
         "\r\n[APP] main entered\r\n"
@@ -801,14 +791,14 @@ int main()
 
     /*
      * ------------------------------------------------------------
-     * 2. YOLO 权重文件目录
+     * 2. YOLO weight directory
      * ------------------------------------------------------------
      *
-     * SD 卡中应存在：
+     * The SD card must contain:
      *
      *      yolov4_tiny_weights
      *
-     * 后续 yolo_test() 会从该目录读取模型参数。
+     * yolo_test() reads the model parameters from this directory.
      */
     string weight_dir =
         "yolov4_tiny_weights";
@@ -816,21 +806,20 @@ int main()
 
     /*
      * ------------------------------------------------------------
-     * 3. 输入图片候选路径
+     * 3. Candidate input image paths
      * ------------------------------------------------------------
      *
-     * 为了兼容不同图片格式，
-     * 程序依次检查：
+     * To accept several image formats, the program checks in turn:
      *
      *      yolo_test/input.jpg
      *      yolo_test/input.jpeg
      *      yolo_test/input.png
      *
-     * 找到第一个存在的文件就停止继续查找。
+     * and stops at the first file that exists.
      *
-     * 注意：
-     * FatFs 支持 '\' 作为路径分隔，
-     * C/C++ 字符串中 '\' 需要写成 '\\'。
+     * Note:
+     * FatFs accepts '\' as a path separator, which has to be
+     * written '\\' in a C/C++ string literal.
      */
     const char* input_candidates[] =
     {
@@ -841,16 +830,16 @@ int main()
 
 
     /*
-     * YOLO 推理完成后的输出图片。
+     * Output image written once inference completes.
      *
-     * 检测框、类别、置信度等结果应当被绘制到该图片。
+     * Detection boxes, classes and confidences are drawn onto it.
      */
     string output_jpeg =
         "yolo_test\\result.jpg";
 
 
     /*
-     * 串口输出程序功能提示。
+     * Announce what the program does over the serial port.
      */
     cout
         << "YOLOv4-Tiny SD JPEG/PNG inference"
@@ -859,7 +848,7 @@ int main()
 
     /*
      * ------------------------------------------------------------
-     * 4. 初始化 / 挂载 SD 卡
+     * 4. Initialise and mount the SD card
      * ------------------------------------------------------------
      */
     xil_printf(
@@ -868,17 +857,17 @@ int main()
 
 
     /*
-     * 调用工程内部 SD_Init()。
+     * Call the project's SD_Init().
      *
-     * 预期它负责：
+     * It is responsible for:
      *
-     *      SD控制器初始化
-     *      FatFs注册
-     *      FAT分区挂载
+     *      initialising the SD controller
+     *      registering FatFs
+     *      mounting the FAT partition
      *
-     * 返回：
+     * Returns:
      *
-     *      XST_SUCCESS = 成功
+     *      XST_SUCCESS on success
      */
     const int sd_init_rc = SD_Init();
 
@@ -886,8 +875,7 @@ int main()
 #ifdef QIMING_DIAGNOSTIC
 
     /*
-     * 保存 SD 初始化返回值，
-     * 方便 JTAG 调试。
+     * Record the SD initialisation result for JTAG inspection.
      */
     g_diag_sd_init_rc = sd_init_rc;
 
@@ -895,20 +883,19 @@ int main()
 
 
     /*
-     * 如果 SD 卡初始化失败，
-     * 后面的权重、图片都无法读取，
-     * 因此直接结束程序。
+     * If the SD card failed to initialise, neither the weights nor
+     * the image can be read, so stop here.
      */
     if (sd_init_rc != XST_SUCCESS) {
 
 #ifdef QIMING_DIAGNOSTIC
 
         /*
-         * 错误码：
+         * Error code:
          *
          *      0xE001
          *
-         * 表示 SD 初始化阶段失败。
+         * means the SD initialisation stage failed.
          */
         diagnostic_stop(0xE001);
 
@@ -921,9 +908,9 @@ int main()
 #ifdef QIMING_DIAGNOSTIC
 
     /*
-     * 阶段 2：
+     * Stage 2:
      *
-     * SD 卡已经成功挂载。
+     * the SD card mounted successfully.
      */
     g_diag_stage = 2;
 
@@ -934,11 +921,10 @@ int main()
 
 
     /*
-     * 向 SD 卡写 boot_stage.txt。
+     * Write boot_stage.txt to the SD card.
      *
-     * 这样即使串口没有输出，
-     * 也可以通过电脑检查 SD 卡，
-     * 判断程序是否成功执行到这里。
+     * Even with no serial output, the card can be checked on a PC
+     * to confirm the program reached this point.
      */
     g_diag_stage_file_rc =
         write_boot_stage(
@@ -948,9 +934,9 @@ int main()
 
 
     /*
-     * 阶段 3：
+     * Stage 3:
      *
-     * SD 挂载并完成 boot stage 文件记录。
+     * SD mounted and the boot stage file written.
      */
     g_diag_stage = 3;
 
@@ -959,33 +945,30 @@ int main()
 
     /*
      * ------------------------------------------------------------
-     * 5. 查找输入图片
+     * 5. Find the input image
      * ------------------------------------------------------------
      *
-     * input_image 最终保存实际找到的图片路径。
-     *
-     * 初始为空。
+     * input_image ends up holding the path of the image actually
+     * found, and starts out empty.
      */
     string input_image;
 
 
     /*
-     * FatFs 文件信息结构体。
+     * FatFs file information structure.
      *
-     * f_stat() 会向其中写入：
+     * f_stat() fills in:
      *
-     *      文件大小
-     *      属性
-     *      日期
-     *      时间
-     *
-     * 等信息。
+     *      file size
+     *      attributes
+     *      date
+     *      time
      */
     FILINFO info;
 
 
     /*
-     * 依次尝试三个文件名。
+     * Try each of the three candidate filenames in turn.
      */
     for (
         unsigned int i = 0;
@@ -996,10 +979,10 @@ int main()
     ) {
 
         /*
-         * 判断该文件是否存在。
+         * Check whether this file exists.
          *
-         * FR_OK：
-         *      文件存在并成功读取属性。
+         * FR_OK:
+         *      the file exists and its attributes were read.
          */
         const FRESULT stat_result =
             f_stat(
@@ -1011,13 +994,11 @@ int main()
 #ifdef QIMING_DIAGNOSTIC
 
         /*
-         * 保存每一种文件格式的 f_stat 返回值。
+         * Record the f_stat result for each candidate format:
          *
-         * 例如：
-         *
-         * g_diag_stat_rc[0] → input.jpg
-         * g_diag_stat_rc[1] → input.jpeg
-         * g_diag_stat_rc[2] → input.png
+         * g_diag_stat_rc[0] -> input.jpg
+         * g_diag_stat_rc[1] -> input.jpeg
+         * g_diag_stat_rc[2] -> input.png
          */
         g_diag_stat_rc[i] =
             static_cast<int>(
@@ -1028,12 +1009,9 @@ int main()
 
 
         /*
-         * 找到文件后：
+         * Once a file is found, record its path and stop searching.
          *
-         * 保存实际输入图片路径，
-         * 然后退出循环。
-         *
-         * 因此优先级是：
+         * The resulting priority is therefore:
          *
          *      JPG
          *       >
@@ -1052,8 +1030,8 @@ int main()
 
 
     /*
-     * 如果三个候选文件全部不存在，
-     * input_image 仍为空。
+     * If none of the three candidates exist, input_image is still
+     * empty.
      */
     if (input_image.empty()) {
 
@@ -1066,12 +1044,11 @@ int main()
 #ifdef QIMING_DIAGNOSTIC
 
         /*
-         * 错误码：
+         * Error code:
          *
          *      0xE002
          *
-         * 表示 SD 卡已经成功，
-         * 但没有找到输入图片。
+         * means the SD card worked but no input image was found.
          */
         diagnostic_stop(0xE002);
 
@@ -1085,7 +1062,7 @@ int main()
 
     /*
      * ------------------------------------------------------------
-     * 6. Diagnostic：记录已经找到输入图片
+     * 6. Diagnostic: record that an input image was found
      * ------------------------------------------------------------
      */
     g_diag_stage = 4;
@@ -1098,7 +1075,7 @@ int main()
 
 
     /*
-     * 更新 SD 卡中的 boot_stage.txt。
+     * Update boot_stage.txt on the SD card.
      */
     g_diag_stage_file_rc =
         write_boot_stage(
@@ -1110,29 +1087,29 @@ int main()
 
     /*
      * ------------------------------------------------------------
-     * Diagnostic：将原始输入图片复制到 DDR
+     * Diagnostic: copy the raw input image into DDR
      * ------------------------------------------------------------
      *
-     * 目的不是 YOLO 正常推理，
-     * 而是为了 JTAG 调试。
+     * This is not part of normal inference; it exists for JTAG
+     * debugging.
      *
-     * 输入图片会复制到：
+     * The input image is copied to:
      *
      *      0x30000000
      *
-     * 这样调试时可以直接从 DDR 中读取文件内容，
-     * 判断 SD 卡读出的图片是否正确。
+     * so its contents can be read straight out of DDR to confirm
+     * the image was read correctly from the SD card.
      */
 
 
     /*
-     * 输入图片文件对象。
+     * Input image file object.
      */
     FIL input_copy_file;
 
 
     /*
-     * 打开输入图片，只读。
+     * Open the input image read-only.
      */
     g_diag_input_copy_rc =
         static_cast<int>(
@@ -1145,12 +1122,12 @@ int main()
 
 
     /*
-     * 文件打开成功。
+     * File opened successfully.
      */
     if (g_diag_input_copy_rc == FR_OK) {
 
         /*
-         * 读取输入图片的完整文件大小。
+         * Read the full size of the input image.
          */
         const UINT input_copy_size =
             static_cast<UINT>(
@@ -1159,19 +1136,19 @@ int main()
 
 
         /*
-         * 记录实际读取字节数。
+         * Number of bytes actually read.
          */
         UINT input_copy_bytes = 0;
 
 
         /*
-         * 将完整输入图片读取到固定 DDR 地址：
+         * Read the whole input image to the fixed DDR address:
          *
          *      0x30000000
          *
-         * reinterpret_cast<void*>：
+         * reinterpret_cast<void*>:
          *
-         *      将整数地址转换成内存指针。
+         *      turns the integer address into a memory pointer.
          */
         g_diag_input_copy_rc =
             static_cast<int>(
@@ -1187,14 +1164,14 @@ int main()
 
 
         /*
-         * 保存实际读取字节数。
+         * Record how many bytes were actually read.
          */
         g_diag_input_copy_bytes =
             input_copy_bytes;
 
 
         /*
-         * 关闭输入文件。
+         * Close the input file.
          */
         const FRESULT close_result =
             f_close(
@@ -1203,8 +1180,8 @@ int main()
 
 
         /*
-         * 如果读取本身没有错误，
-         * 则使用文件关闭状态作为最终状态。
+         * If the read itself succeeded, report the close status
+         * instead.
          */
         if (g_diag_input_copy_rc == FR_OK) {
 
@@ -1217,9 +1194,9 @@ int main()
 
 
     /*
-     * 阶段 5：
+     * Stage 5:
      *
-     * 输入图片已经完成诊断性 DDR 拷贝。
+     * the diagnostic DDR copy of the input image is done.
      */
     g_diag_stage = 5;
 
@@ -1227,7 +1204,7 @@ int main()
 
 
     /*
-     * UART / 标准输出打印最终选择的输入图片路径。
+     * Print the input image path that was finally selected.
      */
     cout
         << "input image: "
@@ -1237,34 +1214,34 @@ int main()
 
     /*
      * ------------------------------------------------------------
-     * 7. 执行 YOLOv4-Tiny 推理
+     * 7. Run YOLOv4-Tiny inference
      * ------------------------------------------------------------
      *
-     * 调用：
+     * Call:
      *
      *      yolo_test(
-     *          权重目录,
-     *          输入图片,
-     *          输出图片
+     *          weight directory,
+     *          input image,
+     *          output image
      *      )
      *
-     * 正常情况下 yolo_test() 内部负责：
+     * Internally yolo_test() is responsible for:
      *
-     *  1. 读取 YOLO 权重
-     *  2. JPEG / PNG 解码
-     *  3. 图片 resize / letterbox 等预处理
-     *  4. 网络前向传播
-     *  5. 调用 HLS 卷积加速 IP
-     *  6. YOLO Detection Head 解码
-     *  7. NMS 非极大值抑制
-     *  8. 绘制检测框
-     *  9. JPEG 编码
-     * 10. 保存 result.jpg
+     *  1. reading the YOLO weights
+     *  2. decoding the JPEG / PNG
+     *  3. resize / letterbox preprocessing
+     *  4. the forward pass
+     *  5. driving the HLS convolution accelerator
+     *  6. decoding the YOLO detection heads
+     *  7. non-maximum suppression
+     *  8. drawing the detection boxes
+     *  9. JPEG encoding
+     * 10. saving result.jpg
      *
-     * yolo_test() 返回：
+     * yolo_test() returns:
      *
-     *      true  = 全流程成功
-     *      false = 某一步失败
+     *      true  = the whole flow succeeded
+     *      false = a step failed
      */
     if (
         !yolo_test(
@@ -1275,10 +1252,9 @@ int main()
     ) {
 
         /*
-         * YOLO 推理失败。
+         * Inference failed.
          *
-         * 此时不会调用 set_done_led()，
-         * 因此 PS_LED0 继续保持熄灭。
+         * set_done_led() is not called, so PS_LED0 stays off.
          */
         cout
             << "inference failed"
@@ -1288,11 +1264,11 @@ int main()
 #ifdef QIMING_DIAGNOSTIC
 
         /*
-         * 错误码：
+         * Error code:
          *
          *      0xE003
          *
-         * 表示 YOLO 推理阶段失败。
+         * means the YOLO inference stage failed.
          */
         diagnostic_stop(0xE003);
 
@@ -1304,18 +1280,17 @@ int main()
 
     /*
      * ------------------------------------------------------------
-     * 8. 推理完全成功后点亮 PS_LED0
+     * 8. Light PS_LED0 once inference has fully succeeded
      * ------------------------------------------------------------
      *
-     * 能执行到这里意味着 yolo_test() 返回 true。
+     * Reaching this point means yolo_test() returned true.
      *
-     * 按本工程约定：
+     * By this project's convention that implies:
      *
-     *      输入、权重、推理、result.jpg 写回
+     *      the input, the weights, inference and the result.jpg
+     *      write-back
      *
-     * 应均已经成功完成。
-     *
-     * 因此将 MIO7 拉高。
+     * have all completed successfully, so MIO7 is driven high.
      */
     set_done_led();
 
@@ -1324,19 +1299,19 @@ int main()
 
     /*
      * ------------------------------------------------------------
-     * 9. Diagnostic：检查 result.jpg
+     * 9. Diagnostic: check result.jpg
      * ------------------------------------------------------------
      */
 
 
     /*
-     * 用于保存 result.jpg 的文件信息。
+     * Holds the file information for result.jpg.
      */
     FILINFO result_info;
 
 
     /*
-     * 检查 result.jpg 是否真实存在。
+     * Check that result.jpg really exists.
      */
     g_diag_result_stat_rc =
         static_cast<int>(
@@ -1348,15 +1323,13 @@ int main()
 
 
     /*
-     * 如果 result.jpg 存在：
-     *
-     * 将完整 JPEG 文件读入 DDR，
-     * 方便后续 JTAG 导出检查。
+     * If result.jpg exists, read the whole JPEG into DDR so it can
+     * be exported over JTAG.
      */
     if (g_diag_result_stat_rc == FR_OK) {
 
         /*
-         * 保存 result.jpg 大小。
+         * Record the size of result.jpg.
          */
         g_diag_result_size =
             static_cast<unsigned int>(
@@ -1365,10 +1338,9 @@ int main()
 
 
         /*
-         * 在堆上申请一块和 result.jpg
-         * 大小相同的内存。
+         * Allocate a heap buffer the same size as result.jpg.
          *
-         * 这里返回的是实际 DDR 地址。
+         * This returns a real DDR address.
          */
         unsigned char* result_copy =
             new unsigned char[
@@ -1377,19 +1349,19 @@ int main()
 
 
         /*
-         * result.jpg 文件对象。
+         * result.jpg file object.
          */
         FIL result_file;
 
 
         /*
-         * 实际读取的字节数。
+         * Number of bytes actually read.
          */
         UINT result_bytes = 0;
 
 
         /*
-         * 以只读方式打开 result.jpg。
+         * Open result.jpg read-only.
          */
         g_diag_result_copy_rc =
             static_cast<int>(
@@ -1402,7 +1374,7 @@ int main()
 
 
         /*
-         * 打开成功后，将整个文件读取到 result_copy。
+         * On success, read the whole file into result_copy.
          */
         if (g_diag_result_copy_rc == FR_OK) {
 
@@ -1418,7 +1390,7 @@ int main()
 
 
             /*
-             * 关闭 result.jpg。
+             * Close result.jpg.
              */
             const FRESULT close_result =
                 f_close(
@@ -1427,8 +1399,7 @@ int main()
 
 
             /*
-             * 如果读取成功，
-             * 再检查关闭文件是否成功。
+             * If the read succeeded, check the close status too.
              */
             if (
                 g_diag_result_copy_rc ==
@@ -1444,13 +1415,13 @@ int main()
 
 
         /*
-         * 保存 result_copy 的 DDR 地址。
+         * Record the DDR address of result_copy.
          *
-         * JTAG 后续可以读取：
+         * JTAG can then read:
          *
          *      g_diag_result_copy_address
          *
-         * 得到 JPEG 文件在 DDR 中的位置。
+         * to find the JPEG in DDR.
          */
         g_diag_result_copy_address =
             reinterpret_cast<unsigned int>(
@@ -1459,7 +1430,7 @@ int main()
 
 
         /*
-         * 保存实际读取到 DDR 的字节数。
+         * Record how many bytes were actually copied into DDR.
          */
         g_diag_result_copy_bytes =
             result_bytes;
@@ -1467,28 +1438,26 @@ int main()
 
 
     /*
-     * 0x9000：
+     * 0x9000:
      *
-     * 表示整个程序已经成功走完。
+     * the whole program ran to completion.
      */
     g_diag_stage = 0x9000;
 
 
     /*
-     * 诊断模式下：
+     * In diagnostic mode the program does not return even on
+     * success.
      *
-     * 即使已经成功，也不会直接 return。
+     * It parks in an infinite loop instead, so JTAG can read:
      *
-     * 而是停在死循环，
-     * 方便通过 JTAG 读取：
+     *      the detection count
+     *      the inference time
+     *      the output tensors
+     *      the address of result.jpg
+     *      the size of result.jpg
      *
-     *      检测数量
-     *      推理耗时
-     *      输出张量
-     *      result.jpg 地址
-     *      result.jpg 大小
-     *
-     * 等诊断信息。
+     * and the rest of the diagnostic state.
      */
     diagnostic_stop(0x9000);
 
@@ -1497,7 +1466,7 @@ int main()
 
     /*
      * ------------------------------------------------------------
-     * 10. 正常模式下程序执行结束
+     * 10. Normal completion
      * ------------------------------------------------------------
      */
     cout
@@ -1506,9 +1475,7 @@ int main()
 
 
     /*
-     * 返回 0：
-     *
-     * 表示应用程序正常完成。
+     * Return 0 to indicate the application finished normally.
      */
     return 0;
 }

@@ -10,27 +10,27 @@ class YOLO(object):
         #--------------------------------------------------------------------------#
         "classes_path"      : 'model_data/coco_classes.txt',
         #---------------------------------------------------------------------#
-        #   anchors_path代表先验框对应的txt文件，一般不修改。
-        #   anchors_mask用于帮助代码找到对应的先验框，一般不修改。
+        #   anchors_path points at the anchor definition file; normally left alone.
+        #   anchors_mask selects which anchors belong to which head; normally left alone.
         #---------------------------------------------------------------------#
         "anchors_path"      : 'model_data/yolo_anchors.txt',
         "anchors_mask"      : [[3,4,5], [1,2,3]],
         #-------------------------------#
         #---------------------------------------------------------------------#
-        #   输入图片的大小，必须为32的倍数。
+        #   Network input size; must be a multiple of 32.
         #---------------------------------------------------------------------#
         "input_shape"       : [416, 416],
         #---------------------------------------------------------------------#
-        #   只有得分大于置信度的预测框会被保留下来
+        #   Only boxes scoring above this confidence are kept
         #---------------------------------------------------------------------#
         "confidence"        : 0.5,
         #---------------------------------------------------------------------#
-        #   非极大抑制所用到的nms_iou大小
+        #   IoU threshold used by non-maximum suppression
         #---------------------------------------------------------------------#
         "nms_iou"           : 0.3,
         #---------------------------------------------------------------------#
-        #   该变量用于控制是否使用letterbox_image对输入图像进行不失真的resize，
-        #   在多次测试后，发现关闭letterbox_image直接resize的效果更好
+        #   Controls whether letterbox_image is used for aspect-preserving resize;
+        #   testing showed a plain resize works better here, so it is disabled
         #---------------------------------------------------------------------#
         "letterbox_image"   : False,
     }
@@ -43,26 +43,26 @@ class YOLO(object):
             return "Unrecognized attribute name '" + n + "'"
 
     #---------------------------------------------------#
-    #   初始化YOLO
+    #   Initialise YOLO
     #---------------------------------------------------#
     def __init__(self, **kwargs):
         self.__dict__.update(self._defaults)
         for name, value in kwargs.items():
             setattr(self, name, value)
         #---------------------------------------------------#
-        #   获得种类和先验框的数量
+        #   Count the classes and anchors
         #---------------------------------------------------#
         self.class_names, self.num_classes  = get_classes(self.classes_path)
         self.out_ch=(5+self.num_classes)*3
         self.anchors, self.num_anchors      = get_anchors(self.anchors_path)
         self.bbox_util                      = DecodeBox(self.anchors, self.num_classes, (self.input_shape[0], self.input_shape[1]), self.anchors_mask)
         #---------------------------------------------------#
-        #   画框设置不同的颜色
+        #   Assign a distinct colour per class
         #---------------------------------------------------#
         hsv_tuples = [(x / self.num_classes, 1., 1.) for x in range(self.num_classes)]
         self.colors = list(map(lambda x: colorsys.hsv_to_rgb(*x), hsv_tuples))
         self.colors = list(map(lambda x: (int(x[0] * 255), int(x[1] * 255), int(x[2] * 255)), self.colors))
-    #图片预处理,使得它可以直接作为加速器的输入
+    #Preprocess an image so it can be fed straight to the accelerator
     def preprocess_image(self,image,dir):
         image       = cvtColor(image)
         image_data  = resize_image(image, (self.input_shape[1],self.input_shape[0]), self.letterbox_image)
@@ -76,19 +76,19 @@ class YOLO(object):
             image.save(dir+"\\img.png")
         return images
     #---------------------------------------------------#
-    #   检测图片
+    #   Run detection on an image
     #---------------------------------------------------#
     def detect_image(self, image,dir):
         image_shape = np.array(np.shape(image)[0:2])
         images=self.preprocess_image(image,dir=None)
         with torch.no_grad():
-            #直接使用加速器得到的输出:
+            #Use the tensors produced by the accelerator directly:
             out0=torch.from_numpy(np.fromfile(dir+"\\out0.bin",dtype=np.float32)).view(1,self.out_ch,13,13)
             out1=torch.from_numpy(np.fromfile(dir+"\\out1.bin",dtype=np.float32)).view(1,self.out_ch,26,26)
             outputs=[out0,out1]
             outputs = self.bbox_util.decode_box(outputs)
             #---------------------------------------------------------#
-            #   将预测框进行堆叠，然后进行非极大抑制
+            #   Stack the predictions, then run non-maximum suppression
             #---------------------------------------------------------#
             results = self.bbox_util.non_max_suppression(torch.cat(outputs, 1), self.num_classes, self.input_shape, 
                         image_shape, self.letterbox_image, conf_thres = self.confidence, nms_thres = self.nms_iou)
@@ -100,13 +100,13 @@ class YOLO(object):
             top_conf    = results[0][:, 4] * results[0][:, 5]
             top_boxes   = results[0][:, :4]
         #---------------------------------------------------------#
-        #   设置字体与边框厚度
+        #   Set the font and box thickness
         #---------------------------------------------------------#
         font        = ImageFont.truetype(font='model_data/simhei.ttf', size=np.floor(3e-2 * image.size[1] + 0.5).astype('int32'))
         thickness   = int(max((image.size[0] + image.size[1]) // np.mean(self.input_shape), 1))
         
         #---------------------------------------------------------#
-        #   图像绘制
+        #   Draw onto the image
         #---------------------------------------------------------#
         for i, c in list(enumerate(top_label)):
             predicted_class = self.class_names[int(c)]

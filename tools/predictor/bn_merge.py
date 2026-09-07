@@ -45,7 +45,7 @@ def save_folded_weights(dir,state):
     resblock_merge("backbone.resblock_body2.", 2,dir, state)
     resblock_merge("backbone.resblock_body3.", 3,dir, state)
 
-    # conv_for_P5 bn融合
+    # fold BatchNorm into conv_for_P5
     w, b = conv_bn_merge("conv_for_P5.", state)
     w.tofile(dir+"\\conv_forP5\\w.bin")
     b.tofile(dir+"\\conv_forP5\\b.bin")

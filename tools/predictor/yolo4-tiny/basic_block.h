@@ -7,7 +7,7 @@ using namespace std;
 
 class BasicConv{
 public:
-    //����
+    //layer geometry
     int h;
     int w;
     int s;
@@ -15,11 +15,11 @@ public:
     int p;
     int ch_in;
     int ch_out;
-    //Ȩ��
+    //parameters
     float* weight;
     float* bias;
     float alpha;                //leakyrelu
-    //����
+    //constructor
     BasicConv(int h,int w,int k,int s,int p,int ch_in,int ch_out){
         this->h=h;
         this->w=w;
@@ -55,7 +55,7 @@ public:
         delete [] conv_out;        //dont forget!!
     }
     void load_weight(string dir){
-        //��ȡ����Ȩ��
+        //read this layer's weights
         string filename;
         filename=dir+"\\w.bin";
         read_params(filename,this->weight,this->ch_out*this->ch_in*this->k*this->k);
@@ -79,7 +79,7 @@ public:
         this->w=w;
         this->ch_in=ch_in;
         this->ch_out=ch_out;
-        //��ʼ��BasicConv
+        //build the BasicConv sub-layers
         this->conv1=new BasicConv(this->h,this->w,3,1,1,this->ch_in,this->ch_out);                   //
         this->conv2=new BasicConv(this->h,this->w,3,1,1,this->ch_out/2,this->ch_out/2);
         this->conv3=new BasicConv(this->h,this->w,3,1,1,this->ch_out/2,this->ch_out/2);
@@ -108,7 +108,7 @@ public:
         filename=dir+"\\b4.bin";
         read_params(filename,this->conv4->bias,this->ch_out);
     }
-    void concat(float* a,float* b,float* out,int h,int w,int ch_out){                //ch_outΪƴ�Ӻ��ͨ����,out=concat([a,b],axis=1)
+    void concat(float* a,float* b,float* out,int h,int w,int ch_out){                //ch_out is the channel count after concatenation, out=concat([a,b],axis=1)
             for(int i=0;i<h*w*ch_out/2;i++){
                   out[i]=a[i];
             }
@@ -118,7 +118,7 @@ public:
     }
     void forward(float* in,float* feat,float* out){
           float *route=new float[2*this->ch_out*this->h*this->w];                 //concat(true_route,feat)
-          float *conv3_out=new float[this->ch_out*this->h*this->w];               //conv3_out前半部分为conv3的输出,后半部分为route1
+          float *conv3_out=new float[this->ch_out*this->h*this->w];               //first half of conv3_out is conv3's output, second half is route1
           float *pool_in=new float[this->ch_out*2*this->h*this->w];               //concat(route,feat)
           //
           conv1->forward(in,route);

@@ -1,7 +1,7 @@
 #include"basic_op.h"
 
 void conv_leakyrelu(int ch_in,int ch_out,int pad,int stride,int k,int h,int w,data_t* in,data_t *weight,data_t *bias,data_t *out,int act){
-	//Xil_DCacheFlushRange((u32)in,sizeof(data_t)*ch_in*h*w);//������ˢ����DDR
+	//Xil_DCacheFlushRange((u32)in,sizeof(data_t)*ch_in*h*w);//flush the input buffer out to DDR
 	XConv_Set_in1_V(&conv_inst, (u32)in);
 	XConv_Set_in2_V(&conv_inst, (u32)in);
 	XConv_Set_in3_V(&conv_inst, (u32)in);

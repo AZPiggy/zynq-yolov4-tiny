@@ -42,7 +42,7 @@ void StdConvTest(int ch_in,int ch_out,int fsize,int stride,int act) {
 	data_t *weight = (data_t*)malloc(ch_out*ch_in*9*sizeof(data_t));
 	data_t *out1=(data_t*)malloc((ch_out*fsize*fsize+1000000)*sizeof(data_t));
 	data_t *out2=(data_t*)malloc((ch_out*fsize*fsize+1000000)*sizeof(data_t));
-	//��ʼ��
+	//initialise
 	for(int i=0;i<ch_out;i++){
 		bias[i]=(rand()%256-128)/128.0;
 	}
@@ -50,7 +50,7 @@ void StdConvTest(int ch_in,int ch_out,int fsize,int stride,int act) {
 		*((data_t*)in + i) = (rand()% 128 - 64)/128.0;
 	for (int i = 0; i < ch_out * ch_in * 9; i++)
 		*((data_t*)weight + i) = (rand()% 128 - 64)/128.0;
-	//����
+	//compute
 	baseline_conv((data_t*)in, (data_t*)weight, (data_t*)bias,(data_t*)out1, fsize, fsize,stride,act,ch_in, ch_out);
 	conv((data_t*)in,(data_t*)in,(data_t*)in,(data_t*)in,(data_t*)weight,(data_t*)weight,(data_t*)weight,(data_t*)weight,
 		 (data_t*)bias,(data_t*)out2,(data_t*)out2,(data_t*)out2,(data_t*)out2,ch_in,ch_out,fsize,stride,3,act);

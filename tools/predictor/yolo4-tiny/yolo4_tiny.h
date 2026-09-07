@@ -18,7 +18,7 @@ public:
     int out_ch = 255;
     //upsample
     BasicConv* upsample_conv;
-    Yolo4_Tiny(){           //���캯��
+    Yolo4_Tiny(){           //constructor
         //this->out_ch=(4+1+class_num)*3
         this->backbone=new CSPDarkNet();
         //conv_forP5
@@ -69,7 +69,7 @@ public:
         float* P4=new float[384*26*26];
         float* out1_tmp=new float[256*26*26];
         //compute
-        this->backbone->forward(in,P4+128*26*26,feat2);                 //相当于concat,P4=concat(Upsample_out,feat1)
+        this->backbone->forward(in,P4+128*26*26,feat2);                 //acts as a concat: P4 = concat(Upsample_out, feat1)
         //conv_forP5
         this->conv_forP5_conv->forward(feat2,P5);
         //out0
