@@ -78,18 +78,24 @@ planes plus a memory contract the firmware has to honour:
 - **Polling, not interrupts.** A bare-metal program with one job spins on `XConv_IsDone()`
   — simpler and lower-latency here than an ISR.
 - **The real contract is cache coherency.** The HP ports have no hardware coherency with
-  the ARM caches, so software must `Xil_DCacheFlush()` before `XConv_Start()` and
-  `Xil_DCacheInvalidateRange()` after `XConv_IsDone()` — otherwise the accelerator reads
-  stale input or the CPU reads stale output. See `conv_leakyrelu()` in `basic_op.cpp`.
+  the ARM caches, so the CPU's writes must be flushed to DDR before the accelerator reads
+  them, and the CPU's cached copy of the outputs must be invalidated before it reads them —
+  otherwise the accelerator reads stale input or the CPU reads stale output. Intermediate
+  feature maps are written and read only by the PL, so this happens once per image, not
+  per layer: `yolo_test()` in `debug.cpp` calls `Xil_DCacheFlush()` before the forward pass
+  and `Xil_DCacheInvalidateRange()` on the two output tensors after it. (The per-layer
+  cache calls in `conv_leakyrelu()` in `basic_op.cpp` are commented out.)
 
-The per-layer handshake, in full:
+The handshake, in full:
 
 ```
-PS: write 13 buffer addresses + 6 geometry scalars
-PS: Xil_DCacheFlush()
-PS: XConv_Start()
-PL: burst-reads DDR, computes, burst-writes results back
-PS: poll XConv_IsDone(), then Xil_DCacheInvalidateRange()
+PS: Xil_DCacheFlush()                       once per image
+    for each of the 28 layer calls:
+PS:   write 13 buffer addresses + 6 geometry scalars
+PS:   XConv_Start()
+PL:   burst-reads DDR, computes, burst-writes results back
+PS:   poll XConv_IsDone()
+PS: Xil_DCacheInvalidateRange() on out0, out1   once per image
 ```
 
 ### HLS kernel optimizations (`std_conv.cpp`)
