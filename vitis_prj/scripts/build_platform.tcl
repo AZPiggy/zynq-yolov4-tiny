@@ -20,6 +20,7 @@ proc patch_conv_driver_makefiles {build_ws} {
     }
 }
 
+file mkdir $build_ws
 cd $build_ws
 setws .
 if {[file exists [file join $build_ws mindc_yolo_platform platform.spr]]} {
