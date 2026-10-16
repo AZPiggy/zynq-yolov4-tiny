@@ -38,12 +38,18 @@ vitis_prj/output/*.elf
 vitis_prj/output/*.map
 vitis_prj/boot/BOOT.BIN
 
-# --- Vitis HLS solution working directory -----------------------------------
+# --- Vivado HLS solution working directory ----------------------------------
 # The exported IP under top/top/solution1/impl/ip/ IS tracked: the Vivado
-# block design needs it. Everything else in the solution is intermediate.
+# block design needs it. The project and solution settings are tracked so the
+# HLS project can be reopened. Everything else in the solution is intermediate.
 hls_prj/top/top/*
+!hls_prj/top/top/vivado_hls.app
 !hls_prj/top/top/solution1/
 hls_prj/top/top/solution1/*
+!hls_prj/top/top/solution1/script.tcl
+!hls_prj/top/top/solution1/directives.tcl
+!hls_prj/top/top/solution1/solution1.aps
+!hls_prj/top/top/solution1/solution1.directive
 !hls_prj/top/top/solution1/impl/
 hls_prj/top/top/solution1/impl/*
 !hls_prj/top/top/solution1/impl/ip/
