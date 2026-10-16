@@ -21,9 +21,10 @@ SD:/yolo_test/input.jpg  ──►  [ Zynq-7020 ]  ──►  SD:/yolo_test/resu
 - [Hardware](#hardware)
 - [Repository layout](#repository-layout)
 - [Prerequisites](#prerequisites)
+- [Toolchain overview](#toolchain-overview)
 - [Build from source](#build-from-source)
 - [Preparing the SD card](#preparing-the-sd-card)
-- [Running on the board](#running-on-the-board)
+- [Deploying and running on the board](#deploying-and-running-on-the-board)
 - [Weights](#weights)
 - [Porting to a different board](#porting-to-a-different-board)
 - [Troubleshooting](#troubleshooting)
@@ -232,6 +233,39 @@ Also needed:
 
 ---
 
+## Toolchain overview
+
+The design passes through four tools, always in this order. Each stage consumes the
+previous stage's output:
+
+| # | Tool | Project to open | Input | Output |
+|---|---|---|---|---|
+| 1 | Vivado HLS 2019.2 | `hls_prj/top/top` | `hls_prj/top/src/conv.cpp` and the other kernel sources (top function `conv`) | IP core in `hls_prj/top/top/solution1/impl/ip` |
+| 2 | Vivado | `vivado_prj/acc_project/acc_project.xpr` | Block design: PS7 + the HLS IP (found through the project's IP repository path) | Bitstream (`.bit`) and hardware description (`.xsa`) in `vivado_prj/output/` |
+| 3 | Vitis (XSCT) | Workspace `vitis_prj/workspace_mindc` | The `.xsa` | Platform `mindc_yolo_platform`: BSP + FSBL |
+| 4 | ARM GCC + bootgen | — | `vitis_prj/app/src/*.cpp` + BSP; then FSBL + bitstream + ELF | `vitis_prj/output/yolo_qiming.elf`, then `vitis_prj/boot/BOOT.BIN` |
+
+Stage 1 only needs to run when the accelerator C++ changes: the exported IP is checked
+in. Stages 2–4 are fully scripted (see [Build from source](#build-from-source)), so the
+GUIs are only needed to inspect or edit something. The firmware (`main.cpp` and friends)
+runs on the ARM; it is not part of the PL core.
+
+**Key terms**
+
+| Term | Meaning |
+|---|---|
+| **PS7** | The Zynq-7000 processing system as one block in the Vivado block design: the two Cortex-A9 cores, DDR controller, SD, UART, MIO pins and AXI ports. You configure it (enabled peripherals, MIO pin assignments, DDR timing, the 120 MHz PL clock) rather than design it. |
+| **Bitstream (`.bit`)** | The configuration file for the programmable logic. It sets every LUT, flip-flop, DSP, BRAM and routing switch so the fabric becomes the accelerator. The PL loses it at power-off, so it is reloaded on every boot. |
+| **XSA** | Vivado's hardware hand-off to Vitis: the PS7 configuration, address map and bitstream in one file. |
+| **BSP** | Board support package generated from the XSA: startup code, peripheral drivers, cache functions (`Xil_DCacheFlush()`), the accelerator driver (`XConv_*()`), and `xparameters.h` with base addresses. Regenerate it whenever the hardware changes. |
+| **FSBL** | First-stage boot loader, also generated from the XSA. It runs `ps7_init` (DDR, clocks, MIO pins), loads the bitstream into the PL, copies the application into DDR and jumps to `main()`. |
+| **BOOT.BIN** | The single file the board boots from: FSBL + bitstream + application ELF, packed by bootgen from `vitis_prj/boot/qiming_yolo.bif`. |
+
+At power-on the chain is: BootROM (reads the boot switches, loads the FSBL from SD) →
+FSBL (`ps7_init`, loads the bitstream, loads the ELF) → `main()`.
+
+---
+
 ## Build from source
 
 All four stages, in order, from the repository root:
@@ -270,6 +304,24 @@ Outputs:
 | `vitis_prj/output/yolo_qiming.elf` | step 3 |
 | `vitis_prj/boot/BOOT.BIN` | step 4 |
 
+Set `-XilinxVersion` to the Vivado/Vitis version you have installed.
+
+### What to rebuild after a change
+
+| You changed | Rebuild |
+|---|---|
+| Firmware only (`vitis_prj/app/src/`) | Steps 3 and 4 |
+| Block design, pins or clocks in Vivado | Steps 1–4 (`run_full_build.ps1`) |
+| Accelerator C++ (`hls_prj/top/src/`) | HLS first (below), then steps 1–4 |
+| Weight files only | Nothing; copy the new weights to the SD card |
+
+### Re-synthesizing the HLS accelerator
+
+Only needed after editing the kernel sources. In Vivado HLS 2019.2, open the project
+folder `hls_prj/top/top`, run **C Synthesis**, then **Export RTL** (IP catalog format).
+The IP lands in `hls_prj/top/top/solution1/impl/ip`, where `build_hardware.tcl` picks it
+up. Afterwards rebuild steps 1–4.
+
 ---
 
 ## Preparing the SD card
@@ -299,12 +351,29 @@ the first one it finds. Limits: 16 MB file size, 12 megapixels, 4096 px per side
 
 ---
 
-## Running on the board
+## Deploying and running on the board
 
-1. Set the boot DIP switch to SD: **`SW1-1` ON, `SW1-2` OFF**.
-2. Insert the card into `CON1` (underside of the carrier board).
-3. Connect a USB-C cable to `USBC4` and open a terminal at **115200 8N1**.
-4. Power on.
+The board boots from the SD card, so deploying a new build means replacing `BOOT.BIN` on
+the card. There is no programming cable involved.
+
+1. Rebuild as needed (see [What to rebuild after a change](#what-to-rebuild-after-a-change))
+   and check that `vitis_prj/boot/BOOT.BIN` has a fresh timestamp.
+2. Copy `BOOT.BIN` to the **root** of the FAT32 card, overwriting the old one. Leave
+   `yolov4_tiny_weights/` and `yolo_test/` in place.
+3. Delete any old `yolo_test/result.jpg`, so a new one proves the new build ran.
+4. Eject the card safely, then insert it into `CON1` (underside of the carrier board).
+5. Set the boot DIP switch to SD: **`SW1-1` ON, `SW1-2` OFF**.
+6. Connect a USB-C cable to `USBC4` and open a terminal at **115200 8N1**.
+7. Power-cycle the board (remove and restore power). The BootROM reads `BOOT.BIN` only at
+   power-on.
+
+Check the result in three places:
+
+- **Serial log:** ends with `Result saved: yolo_test\result.jpg` and `inference completed`.
+- **LED `D7`:** lights only after a fully successful run.
+- **SD card:** a new `yolo_test/result.jpg` with detection boxes drawn on it. Diagnostic
+  builds (`-Diagnostic`) also write `yolo_test/boot_stage.txt`, which shows how far the
+  run got even without a serial console.
 
 Expected serial output:
 
